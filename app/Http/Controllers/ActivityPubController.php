@@ -93,6 +93,6 @@ class ActivityPubController extends Controller
     public function inbox(Request $request, string $username): JsonResponse
     {
         // For basic implementation, just accept and ignore for now
-        return response()->json(['message' => 'Inbox received'], 200);
+        return response()->json('', 202);
     }
 }
