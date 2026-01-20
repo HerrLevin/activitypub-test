@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Models\Post;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
@@ -94,5 +95,25 @@ class ActivityPubController extends Controller
     {
         // For basic implementation, just accept and ignore for now
         return response()->json('', 202);
+    }
+
+    public function postObject(Request $request, int $id): JsonResponse
+    {
+        $post = Post::find($id);
+        if (!$post) {
+            return response()->json(['error' => 'Post not found'], 404);
+        }
+
+        $object = [
+            '@context' => 'https://www.w3.org/ns/activitystreams',
+            'id' => url('/posts/' . $post->id . '/object'),
+            'type' => 'Note',
+            'published' => $post->created_at->toISOString(),
+            'attributedTo' => url('/users/' . $post->user->username),
+            'content' => $post->body,
+            'to' => ['https://www.w3.org/ns/activitystreams#Public'],
+        ];
+
+        return response()->json($object)->header('Content-Type', 'application/activity+json');
     }
 }

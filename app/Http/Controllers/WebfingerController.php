@@ -15,16 +15,15 @@ class WebfingerController extends Controller
         // get base url without http(s)://
         $baseUrl = preg_replace('#^https?://#', '', $url);
         $resource = $request->query('resource');
-        $resource = str_replace($url . '/users/', 'acct:', $resource);
 
         if (!$resource || !str_starts_with($resource, 'acct:')) {
             return response()->json(['error' => 'Invalid resource'], 400);
         }
 
-        return $this->acctUrl($resource);
+        return $this->acctUrl($resource, $baseUrl);
     }
 
-    private function acctUrl(string $resource)
+    private function acctUrl(string $resource, string $baseUrl)
     {
         $username = str_replace('acct:', '', $resource);
         $elements = explode('@', $username);
@@ -32,6 +31,10 @@ class WebfingerController extends Controller
             return response()->json(['error' => 'Invalid acct format'], 400);
         }
         $username = $elements[0];
+        $domain = $elements[1];
+        if ($domain !== $baseUrl) {
+            return response()->json(['error' => 'Domain mismatch'], 400);
+        }
         $user = User::where('username', $username)->first();
         if (!$user) {
             return response()->json(['error' => 'User not found'], 404);
@@ -48,5 +51,4 @@ class WebfingerController extends Controller
             ],
         ])->header('Content-Type', 'application/jrd+json');
     }
-
 }
