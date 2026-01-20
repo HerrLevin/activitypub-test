@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -23,6 +22,8 @@ class User extends Authenticatable
         'username',
         'email',
         'password',
+        'public_key',
+        'private_key',
     ];
 
     /**
@@ -35,11 +36,6 @@ class User extends Authenticatable
         'remember_token',
     ];
 
-    /**
-     * Get the attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
     protected function casts(): array
     {
         return [
@@ -51,5 +47,25 @@ class User extends Authenticatable
     public function posts(): HasMany
     {
         return $this->hasMany(Post::class);
+    }
+
+    public function createKeys(): void
+    {
+        if ($this->private_key && $this->public_key) {
+            return;
+        }
+
+        // Generate key pair
+        $config = [
+            'private_key_bits' => 2048,
+            'private_key_type' => OPENSSL_KEYTYPE_RSA,
+        ];
+        $keyPair = openssl_pkey_new($config);
+        openssl_pkey_export($keyPair, $privateKey);
+        $publicKey = openssl_pkey_get_details($keyPair)['key'];
+
+        $this->private_key = $privateKey;
+        $this->public_key = $publicKey;
+        $this->save();
     }
 }
