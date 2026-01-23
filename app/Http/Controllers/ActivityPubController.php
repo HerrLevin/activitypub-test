@@ -4,8 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Models\Post;
+use App\Models\Follow;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Http;
 
 class ActivityPubController extends Controller
 {
@@ -93,7 +95,36 @@ class ActivityPubController extends Controller
 
     public function inbox(Request $request, string $username): JsonResponse
     {
-        // For basic implementation, just accept and ignore for now
+        $user = User::where('username', $username)->first();
+        if (!$user) {
+            return response()->json(['error' => 'User not found'], 404);
+        }
+
+        $activity = $request->json()->all();
+
+        if ($activity['type'] === 'Follow') {
+            // Handle follow
+            $followerActorId = $activity['actor'];
+            $followedActorId = $activity['object'];
+
+            // Verify it's following this user
+            if ($followedActorId !== url('/users/' . $user->username)) {
+                return response()->json(['error' => 'Invalid follow object'], 400);
+            }
+
+            // Create follow record
+            Follow::firstOrCreate([
+                'follower_actor_id' => $followerActorId,
+                'followed_user_id' => $user->id,
+            ]);
+
+            // Send Accept activity
+            $this->sendAccept($user, $activity);
+
+            return response()->json('', 202);
+        }
+
+        // For other activities, just accept
         return response()->json('', 202);
     }
 
@@ -115,5 +146,44 @@ class ActivityPubController extends Controller
         ];
 
         return response()->json($object)->header('Content-Type', 'application/activity+json');
+    }
+
+    private function sendAccept(User $user, array $followActivity): void
+    {
+        $followerActorId = $followActivity['actor'];
+
+        // Fetch the follower's actor to get their inbox
+        try {
+            $response = Http::get($followerActorId);
+            if ($response->successful()) {
+                $followerActor = $response->json();
+                $inbox = $followerActor['inbox'] ?? null;
+                if (!$inbox) {
+                    return; // No inbox, can't send
+                }
+            } else {
+                return; // Can't fetch actor
+            }
+        } catch (\Exception $e) {
+            return; // Error fetching
+        }
+
+        // Create Accept activity
+        $acceptActivity = [
+            '@context' => 'https://www.w3.org/ns/activitystreams',
+            'id' => url('/activities/' . uniqid()),
+            'type' => 'Accept',
+            'actor' => url('/users/' . $user->username),
+            'object' => $followActivity,
+        ];
+
+        // Send to inbox
+        try {
+            Http::withHeaders([
+                'Content-Type' => 'application/activity+json',
+            ])->post($inbox, $acceptActivity);
+        } catch (\Exception $e) {
+            // Log error or handle
+        }
     }
 }
