@@ -8,8 +8,7 @@ use App\Models\Follow;
 use App\Services\ActivityPubService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
+use ActivityPhp\Type;
 
 class ActivityPubController extends Controller
 {
@@ -27,13 +26,8 @@ class ActivityPubController extends Controller
             return response()->json(['error' => 'User not found'], 404);
         }
 
-        $actor = [
-            '@context' => [
-                'https://www.w3.org/ns/activitystreams',
-                'https://w3id.org/security/v1',
-            ],
+        $person = Type::create('Person', [
             'id' => url('/users/' . $user->username),
-            'type' => 'Person',
             'preferredUsername' => $user->username,
             'name' => $user->name,
             'inbox' => url('/users/' . $user->username . '/inbox'),
@@ -43,9 +37,13 @@ class ActivityPubController extends Controller
                 'owner' => url('/users/' . $user->username),
                 'publicKeyPem' => $user->public_key,
             ],
-        ];
+        ]);
+        $person->set('@context', [
+            'https://www.w3.org/ns/activitystreams',
+            'https://w3id.org/security/v1',
+        ]);
 
-        return response()->json($actor)->header('Content-Type', 'application/activity+json');
+        return response()->json($person->toArray())->header('Content-Type', 'application/activity+json');
     }
 
     public function outbox(Request $request, string $username): JsonResponse
@@ -57,13 +55,14 @@ class ActivityPubController extends Controller
 
         if (!$request->has('page') && !$request->has('cursor') ) {
             // First page request
-            return response()->json([
-                '@context' => 'https://www.w3.org/ns/activitystreams',
+            $collection = Type::create('OrderedCollection', [
                 'id' => url('/users/' . $user->username . '/outbox'),
-                'type' => 'OrderedCollection',
                 'totalItems' => $user->posts()->count(),
                 'first' => url('/users/' . $user->username . '/outbox?page=true'),
-            ])->header('Content-Type', 'application/activity+json');
+            ]);
+            $collection->set('@context', 'https://www.w3.org/ns/activitystreams');
+
+            return response()->json($collection->toArray())->header('Content-Type', 'application/activity+json');
         }
 
 
@@ -71,35 +70,41 @@ class ActivityPubController extends Controller
 
         $items = [];
         foreach ($posts as $post) {
-            $items[] = [
-                '@context' => 'https://www.w3.org/ns/activitystreams',
+            $note = Type::create('Note', [
+                'id' => url('/posts/' . $post->id . '/object'),
+                'published' => $post->created_at->toISOString(),
+                'attributedTo' => url('/users/' . $user->username),
+                'content' => $post->body,
+                'to' => ['https://www.w3.org/ns/activitystreams#Public'],
+            ]);
+
+            $create = Type::create('Create', [
                 'id' => url('/posts/' . $post->id),
-                'type' => 'Create',
                 'actor' => url('/users/' . $user->username),
                 'published' => $post->created_at->toISOString(),
                 'to' => ['https://www.w3.org/ns/activitystreams#Public'],
-                'object' => [
-                    'id' => url('/posts/' . $post->id . '/object'),
-                    'type' => 'Note',
-                    'published' => $post->created_at->toISOString(),
-                    'attributedTo' => url('/users/' . $user->username),
-                    'content' => $post->body,
-                    'to' => ['https://www.w3.org/ns/activitystreams#Public'],
-                ],
-            ];
+                'object' => $note,
+            ]);
+
+            $items[] = $create;
         }
 
-        $outbox = [
-            '@context' => 'https://www.w3.org/ns/activitystreams',
+        $page = Type::create('OrderedCollectionPage', [
             'id' => url('/users/' . $user->username . '/outbox'),
-            'type' => 'OrderedCollection',
-            'next' => $posts->nextPageUrl(),
-            'prev' => $posts->previousPageUrl(),
-            'partOf' => url('/users/' . $user->username . '/outbox'),
             'orderedItems' => $items,
-        ];
+            'partOf' => url('/users/' . $user->username . '/outbox'),
+        ]);
 
-        return response()->json($outbox)->header('Content-Type', 'application/activity+json');
+        if ($posts->nextPageUrl()) {
+            $page->set('next', $posts->nextPageUrl());
+        }
+        if ($posts->previousPageUrl()) {
+            $page->set('prev', $posts->previousPageUrl());
+        }
+
+        $page->set('@context', 'https://www.w3.org/ns/activitystreams');
+
+        return response()->json($page->toArray())->header('Content-Type', 'application/activity+json');
     }
 
     public function inbox(Request $request, string $username): JsonResponse
@@ -144,17 +149,16 @@ class ActivityPubController extends Controller
             return response()->json(['error' => 'Post not found'], 404);
         }
 
-        $object = [
-            '@context' => 'https://www.w3.org/ns/activitystreams',
+        $note = Type::create('Note', [
             'id' => url('/posts/' . $post->id . '/object'),
-            'type' => 'Note',
             'published' => $post->created_at->toISOString(),
             'attributedTo' => url('/users/' . $post->user->username),
             'content' => $post->body,
             'to' => ['https://www.w3.org/ns/activitystreams#Public'],
-        ];
+        ]);
+        $note->set('@context', 'https://www.w3.org/ns/activitystreams');
 
-        return response()->json($object)->header('Content-Type', 'application/activity+json');
+        return response()->json($note->toArray())->header('Content-Type', 'application/activity+json');
     }
 
     private function sendAccept(User $user, array $followActivity): void
@@ -162,13 +166,13 @@ class ActivityPubController extends Controller
         $followerActorId = $followActivity['actor'];
 
         // Create Accept activity
-        $acceptActivity = [
-            '@context' => 'https://www.w3.org/ns/activitystreams',
+        $accept = Type::create('Accept', [
             'id' => url('/activities/' . uniqid()),
-            'type' => 'Accept',
             'actor' => url('/users/' . $user->username),
             'object' => $followActivity,
-        ];
-        $this->activityPubService->deliverActivity($user, $followerActorId, $acceptActivity);
+        ]);
+        $accept->set('@context', 'https://www.w3.org/ns/activitystreams');
+
+        $this->activityPubService->deliverActivity($user, $followerActorId, $accept->toArray());
     }
 }
