@@ -5,12 +5,21 @@ namespace App\Http\Controllers;
 use App\Models\User;
 use App\Models\Post;
 use App\Models\Follow;
+use App\Services\ActivityPubService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class ActivityPubController extends Controller
 {
+    private ActivityPubService $activityPubService;
+
+    public function __construct(ActivityPubService $activityPubService)
+    {
+        $this->activityPubService = $activityPubService;
+    }
+
     public function actor(Request $request, string $username): JsonResponse
     {
         $user = User::where('username', $username)->first();
@@ -152,22 +161,6 @@ class ActivityPubController extends Controller
     {
         $followerActorId = $followActivity['actor'];
 
-        // Fetch the follower's actor to get their inbox
-        try {
-            $response = Http::get($followerActorId);
-            if ($response->successful()) {
-                $followerActor = $response->json();
-                $inbox = $followerActor['inbox'] ?? null;
-                if (!$inbox) {
-                    return; // No inbox, can't send
-                }
-            } else {
-                return; // Can't fetch actor
-            }
-        } catch (\Exception $e) {
-            return; // Error fetching
-        }
-
         // Create Accept activity
         $acceptActivity = [
             '@context' => 'https://www.w3.org/ns/activitystreams',
@@ -176,14 +169,6 @@ class ActivityPubController extends Controller
             'actor' => url('/users/' . $user->username),
             'object' => $followActivity,
         ];
-
-        // Send to inbox
-        try {
-            Http::withHeaders([
-                'Content-Type' => 'application/activity+json',
-            ])->post($inbox, $acceptActivity);
-        } catch (\Exception $e) {
-            // Log error or handle
-        }
+        $this->activityPubService->deliverActivity($user, $followerActorId, $acceptActivity);
     }
 }
